@@ -1,0 +1,443 @@
+<?php error_reporting(E_ALL & ~E_WARNING);
+
+$cli = new CLI();
+
+############### configs ################
+define("PHPMYADMIN_VERSION", $cli->arguments['--version'] ?? '5.2.1');
+define("PHPMYADMIN_PORT", $cli->arguments['--port'] ?? '8080');
+const DOCKER_COMPOSE_FILE = './docker-compose.yml';
+const SAIL_TRAIT_FILE = './vendor/laravel/sail/src/Console/Concerns/InteractsWithDockerComposeServices.php';
+########################################
+
+########### execution lines ############
+if(in_array('--restore', $argv))
+{
+    if((new Historian)->isEmpty()) 
+        exit("nothing to restore! please install the service first,".PHP_EOL
+            ."like `php install-pma`".PHP_EOL);
+
+    Backup::restoreDockerComposeFile();
+    Backup::restoreInteractsWithDockerComposeServicesFile();
+    Backup::deleteBackupFiles();
+    (new Historian)->clear();
+    echo "related files were restored to right before latest phpmyadmin service installation".PHP_EOL;
+    echo "backup files were deleted".PHP_EOL;
+    exit;
+}
+
+$phpMyAdmin = new phpMyAdmin;
+
+if (in_array('--add', $argv)) {
+    $phpMyAdmin->add();
+    $dockerComposeFile = get_defined_constants()['DOCKER_COMPOSE_FILE'];
+    if(file_exists($dockerComposeFile)) { //file existence check to prevent exception being thrown by next line
+        if(TextProcessor::doesDockerComposeContainPhpMyAdmin())
+            TextProcessor::removePhpMyAdminFromDockerCompose();
+    }
+}
+else { //inject mode
+    $phpMyAdmin->inject();
+}
+########################################
+
+class phpMyAdmin
+{
+    protected string $phpMyAdminService;
+
+    public function __construct()
+    {
+        $phpMyAdminVersion = get_defined_constants()['PHPMYADMIN_VERSION'];
+        $phpMyAdminPort = get_defined_constants()['PHPMYADMIN_PORT'];
+
+        $this->phpMyAdminService =
+        <<<PHPMYADMIN
+        phpmyadmin:
+            image: 'phpmyadmin:$phpMyAdminVersion'
+            ports:
+                - "$phpMyAdminPort:80"
+            environment:
+                PMA_HOST: mysql
+            networks:
+                - sail
+            depends_on:
+                - mysql
+        PHPMYADMIN;
+    }
+
+    /**
+     * injects phpmyadmin service directly to docker-compose.yml
+     *
+     * @return void
+     */
+    public function inject(): void
+    {
+        try {
+
+            if(TextProcessor::doesDockerComposeContainPhpMyAdmin()) 
+                exit("FAILED! phpmyadmin service already exists in docker-compose.yml".PHP_EOL
+                ."If you want to change something about the service,".PHP_EOL 
+                ."use --restore flag first & install the service again with new port & version".PHP_EOL
+                ."like `php install-pma --restore && php install-pma --version=5.1 --port=8008`".PHP_EOL);
+
+            $lines = TextProcessor::readDockerComposeLines();
+
+        } catch (Exception $e) {
+
+            echo $e->getMessage() . PHP_EOL;
+            exit;
+
+        }
+
+        $lineNumber = TextProcessor::findLastLineNumberOfServices($lines);
+        $phpMyAdminService = TextProcessor::indentPhpMyAdminServiceLines($this->phpMyAdminService);
+
+        $lines[$lineNumber - 1] = $lines[$lineNumber - 1] . "\n$phpMyAdminService";
+        $dockerComposeFile = get_defined_constants()['DOCKER_COMPOSE_FILE'];
+        Backup::backupDockerComposeFile();
+
+        echo file_put_contents($dockerComposeFile, implode("\n", $lines)) 
+            ? 'DONE. phpmyadmin service was injected to docker-compose.yml'.PHP_EOL
+            : 'FAILED! couldn\'t inject phpmyadmin service to docker-compose.yml'.PHP_EOL;
+    }
+
+    /**
+     * adds phpmyadmin to sail's services
+     *
+     * @return void
+     */
+    public function add(): void
+    {
+        try {
+
+            if(TextProcessor::doesInteractsWithDockerComposeServicesContainPhpMyAdmin()) 
+                exit("FAILED! phpmyadmin service has already been added".PHP_EOL
+                ."If you want to change something about the service,".PHP_EOL 
+                ."use --restore flag first & install the service again with new port & version along --add flag".PHP_EOL
+                ."like `php install-pma --restore && php install-pma --version=5.1 --port=8008 --add`".PHP_EOL);
+
+            $lines = TextProcessor::readInteractsWithDockerComposeServicesLines();
+
+        } catch (Exception $e){
+
+            echo $e->getMessage() . PHP_EOL;
+            exit;
+
+        }
+
+        $lineNumber = TextProcessor::findLastServiceLineNumber($lines);
+        $lines[$lineNumber - 1] = $lines[$lineNumber - 1] . "\n\t\t'phpmyadmin',";
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        Backup::backupInteractsWithDockerComposeServicesFile();
+
+        echo file_put_contents($sailTraitFile, implode("\n", $lines))
+            ? 'DONE. phpmyadmin service was added to list of sail\'s services'.PHP_EOL
+            : 'FAILED! couldn\'t add phpmyadmin to list of sail\'s services'.PHP_EOL;
+        
+        $this->publishStub();
+    }
+
+    /**
+     * creates phpmyadmin.stub file in sails stub directory
+     *
+     * @return void
+     */
+    private function publishStub(): void
+    {
+        $sailStubsPath = dirname(get_defined_constants()['SAIL_TRAIT_FILE'], 4) . '/stubs';
+        file_put_contents("$sailStubsPath/phpmyadmin.stub", $this->phpMyAdminService);
+    }
+}
+
+class TextProcessor
+{
+    /**
+     * returns first service line number in $services array
+     * within InteractsWithDockerComposeServices.php file
+     *
+     * @param array $lines
+     * @return int
+     */
+    public static function findFirstServiceLineNumber(array $lines): int
+    {
+        return array_search('protected $services = [', self::removeLinesIndentation($lines)) + 2;
+    }
+
+    /**
+     * returns last service line number in $services array
+     * within InteractsWithDockerComposeServices.php file
+     *
+     * @param array $lines
+     * @return int
+     */
+    public static function findLastServiceLineNumber(array $lines): int
+    {
+        return array_search('];', self::removeLinesIndentation($lines));
+    }
+
+    /**
+     * @param array $lines
+     * @return array
+     */
+    public static function removeLinesIndentation(array $lines): array
+    {
+        return array_map(fn($line) => trim($line), $lines);
+    }
+
+    /**
+     * YAML syntax doesn't accept \t for indentation so 4 spaces used instead
+     *
+     * @param array $lines
+     * @return array
+     */
+    public static function addIndentationToLines(array $lines): array
+    {
+        return array_map(fn($line) => "    $line", $lines);
+    }
+
+    /**
+     * indents all lines of $phpMyAdminService for injecting into docker-compose.yml file
+     *
+     * @return string
+     */
+    public static function indentPhpMyAdminServiceLines(string $phpMyAdminService): string
+    {
+        $phpMyAdminServiceLines = explode("\n", $phpMyAdminService);
+        return implode("\n", self::addIndentationToLines($phpMyAdminServiceLines));
+    }
+
+    /**
+     * returns last line number of services object in docker-compose.yml
+     *
+     * @param array $lines
+     * @return int
+     */
+    public static function findLastLineNumberOfServices(array $lines): int
+    {
+        return array_search('networks:', $lines);
+    }
+
+    /**
+     * reads all lines of docker-compose.yml file into an array & returns it
+     *
+     * @return array
+     * @throws Exception
+     */
+    public static function readDockerComposeLines(): array
+    {
+        $dockerComposeFile = get_defined_constants()['DOCKER_COMPOSE_FILE'];
+        if (!is_file($dockerComposeFile) || !is_readable($dockerComposeFile))
+            throw new Exception("Failed! can't read docker-compose.yml lines or file does not exist".PHP_EOL
+            ."install sail first, or run the script in add mode using --add flag");
+
+        return file($dockerComposeFile, FILE_IGNORE_NEW_LINES);
+    }
+
+    /**
+     * reads all lines of InteractsWithDockerComposeServices.php file into an array & returns it
+     *
+     * @return array
+     * @throws Exception
+     */
+    public static function readInteractsWithDockerComposeServicesLines(): array
+    {
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        if (!is_file($sailTraitFile) || !is_readable($sailTraitFile))
+            throw new Exception("Failed! can't read InteractsWithDockerComposeServices.php lines or file does not exist");
+
+        return file($sailTraitFile, FILE_IGNORE_NEW_LINES);
+    }
+
+    /**
+     * @throws Exception
+     */
+    public static function doesDockerComposeContainPhpMyAdmin(): bool
+    {
+        $lines = self::readDockerComposeLines();
+        return in_array('    phpmyadmin:', $lines);
+    }
+
+    /**
+     * @throws Exception
+     */
+    public static function doesInteractsWithDockerComposeServicesContainPhpMyAdmin()
+    {
+        $lines = self::readInteractsWithDockerComposeServicesLines();
+        return in_array("		'phpmyadmin',", $lines);
+    }
+
+    /**
+     * removes phpmyadmin service lines from docker-compose.yml file
+     */
+    public static function removePhpMyAdminFromDockerCompose(): string
+    {
+        $lines = self::readDockerComposeLines();
+        $startLineIndex = array_search('    phpmyadmin:', $lines);
+        $lastLineIndex = $startLineIndex + 9; // 9 is the number of lines inside phpmyadmin.stub
+
+        for($i=$startLineIndex; $i<=$lastLineIndex; $i++) {
+            unset($lines[$i]);
+        }
+
+        $dockerComposeFile = get_defined_constants()['DOCKER_COMPOSE_FILE'];
+
+        return file_put_contents($dockerComposeFile, implode("\n", $lines)) 
+            ? 'phpmyadmin service was removed from docker-compose.yml'.PHP_EOL
+            : 'couldn\'t remove phpmyadmin service from docker-compose.yml'.PHP_EOL;
+    }
+}
+
+class Backup
+{
+    public static function backupDockerComposeFile(): void
+    {
+        $dockerComposeFile = get_defined_constants()['DOCKER_COMPOSE_FILE'];
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        $sailTraitDir = dirname($sailTraitFile);
+        copy($dockerComposeFile, "$sailTraitDir/docker-compose.backup");
+        (new Historian)->write('docker-compose.backup created');
+    }
+
+    public static function backupInteractsWithDockerComposeServicesFile(): void
+    {
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        $sailTraitDir = dirname($sailTraitFile);
+        copy($sailTraitFile, "$sailTraitDir/InteractsWithDockerComposeServices.backup");
+        (new Historian)->write('InteractsWithDockerComposeServices.backup created');
+    }
+
+    public static function restoreDockerComposeFile(): string
+    {
+        $dockerComposeFile = get_defined_constants()['DOCKER_COMPOSE_FILE'];
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        $sailTraitDir = dirname($sailTraitFile);
+        $dockerComposeBackupFile = "$sailTraitDir/docker-compose.backup";
+
+        if(file_exists($dockerComposeBackupFile)) {
+            if(copy($dockerComposeBackupFile, $dockerComposeFile)) {
+                (new Historian)->write('docker-compose.yml restored');
+                return 'docker-compose.yml restored successfully';
+            } else {
+                return 'failed copying backup into docker-compose.yml, probably non-writable';
+            }
+        } else {
+            if(TextProcessor::doesDockerComposeContainPhpMyAdmin())
+                TextProcessor::removePhpMyAdminFromDockerCompose();
+
+            return 'docker-compose.yml restored successfully';
+        }
+    }
+
+    public static function restoreInteractsWithDockerComposeServicesFile(): string
+    {
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        $sailTraitDir = dirname($sailTraitFile);
+        $sailTraitBackupFile = "$sailTraitDir/InteractsWithDockerComposeServices.backup";
+
+        if (file_exists($sailTraitBackupFile)) {
+            if(copy($sailTraitBackupFile, $sailTraitFile)) {
+                (new Historian)->write('InteractsWithDockerComposeServices.php restored');
+                return 'InteractsWithDockerComposeServices.php restored successfully';
+            } else {
+                return 'failed copying backup into InteractsWithDockerComposeServices.php, probably non-writable';
+            }
+        } else {
+            return "InteractsWithDockerComposeServices.backup doesn't exist or isn't readable";
+        }
+    }
+
+    public static function deleteBackupFiles()
+    {
+        #1
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        $sailTraitDir = dirname($sailTraitFile);
+        $dockerComposeBackupFile = "$sailTraitDir/docker-compose.backup";
+        unlink($dockerComposeBackupFile) ? (new Historian)->write('docker-compose.backup deleted') : false;
+
+        #2 
+        $sailTraitBackupFile = "$sailTraitDir/InteractsWithDockerComposeServices.backup";
+        unlink($sailTraitBackupFile) ? (new Historian)->write('InteractsWithDockerComposeServices.backup deleted') : false;
+
+        #3
+        $sailStubsPath = dirname(get_defined_constants()['SAIL_TRAIT_FILE'], 4) . '/stubs';
+        unlink("$sailStubsPath/phpmyadmin.stub") ? (new Historian)->write('phpmyadmin.stub deleted') : false;
+    }
+}
+
+/**
+ * initializing this class puts all key=value like passed arguments
+ * inside $arguments property & facilitates working with them
+ */
+class CLI
+{
+    public array $arguments;
+
+    public function __construct()
+    {
+        $this->preventExecutionThroughBrowser();
+
+        global $argv;
+        $pairArguments = array_filter($argv, fn($arg) => strpos($arg, '='));
+        $query = implode('&', $pairArguments);
+        parse_str($query, $params);
+        $this->arguments = $params;
+    }
+
+    private function preventExecutionThroughBrowser()
+    {
+        if(php_sapi_name() !== 'cli') 
+            exit('<h2>This is not executable through browser, Run the script through terminal</h2>');
+    }
+}
+/**
+ * this class is used for managing restoration process smarter
+ */
+class Historian {
+    /**
+     * holds address to the file used to write history in
+     * @var string
+     */
+    public string $book;
+
+    public function __construct()
+    {
+        $sailTraitFile = get_defined_constants()['SAIL_TRAIT_FILE'];
+        $sailTraitDir = dirname($sailTraitFile);
+        $this->book = "$sailTraitDir/book";
+    }
+
+    /**
+     * @param string
+     * action value may be:
+     * 1- docker-compose.backup created
+     * 2- docker-compose.yml restored
+     * 3- docker-compose.backup deleted
+     * 4- InteractsWithDockerComposeServices.backup created
+     * 5- InteractsWithDockerComposeServices.php restored
+     * 6- InteractsWithDockerComposeServices.backup deleted
+     * 7- phpmyadmin.stub deleted
+     */
+    public function write(string $action)
+    {
+        file_put_contents($this->book, $action, FILE_APPEND);
+    }
+
+    public function lastAction(): string
+    {
+        $allActions = file($this->book, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $lastActionKey = array_key_last($allActions);
+        return $allActions[$lastActionKey];
+    }
+
+    public function isEmpty(): bool
+    {
+        if(!file_exists($this->book) || file_get_contents($this->book) === '' ) 
+            return true;
+
+        return false;
+    }
+
+    public function clear()
+    {
+        file_put_contents($this->book, '');
+    }
+}
