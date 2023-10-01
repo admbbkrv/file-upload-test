@@ -34,7 +34,7 @@ class FileService implements FileServiceInterface
                     return $this->storeFileFromChunks($storeFileFromChunksDTO); //возвращает путь к файлу
                 }
             } catch (Throwable $throwable){
-
+                Log::error('Ошибка: ' . $throwable->getMessage() . '. Файл: ' . $throwable->getFile() . '. Строка: ' . $throwable->getLine());
             }
         }
     }
@@ -63,7 +63,6 @@ class FileService implements FileServiceInterface
                 $pathFirstChunk = storage_path('app/' . $createdChunks[0]);
                 $outputFile = Storage::disk('public')->putFile('videos', new File($pathFirstChunk));
                 $pathOutputFile = storage_path('app/public/' . $outputFile);
-                Log::notice($pathOutputFile);
                 for ($i = 1; $i < $dto->totalChunks; $i++){
                     $pathCurrentChunk = storage_path('app/' . $createdChunks[$i]);
                     $currentChunkContent = file_get_contents($pathCurrentChunk);
