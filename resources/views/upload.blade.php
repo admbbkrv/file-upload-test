@@ -70,11 +70,12 @@
 
         const formData = new FormData();
         formData.append('file', chunk);
-        formData.append('filename', file.name);
+        formData.append('fileName', file.name);
         formData.append('chunkIndex', chunkIndex);
         formData.append('totalChunks', totalChunks);
         formData.append('date', date);
         formData.append('type', file.type);
+        formData.append('size', file.size);
 
         const response = await fetch('/upload', {
             method: 'POST',
