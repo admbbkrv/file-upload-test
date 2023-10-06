@@ -17,6 +17,6 @@ use Illuminate\Support\Facades\Route;
 
 
 Route::get('/', function () {
-    return view('upload');
+    return view('upload-video');
 });
-Route::post('/upload',[FileController::class, 'index']);
+Route::post('/upload-video',[FileController::class, 'storeVideo']);

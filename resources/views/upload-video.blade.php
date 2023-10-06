@@ -67,7 +67,6 @@
         const chunk = file.slice(start, end);
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 
-
         const formData = new FormData();
         formData.append('file', chunk);
         formData.append('fileName', file.name);
@@ -77,7 +76,7 @@
         formData.append('type', file.type);
         formData.append('size', file.size);
 
-        const response = await fetch('/upload', {
+        const response = await fetch('/upload-video', {
             method: 'POST',
             body: formData,
             headers: {
