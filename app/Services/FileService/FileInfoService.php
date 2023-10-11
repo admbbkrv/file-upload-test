@@ -13,11 +13,10 @@ class FileInfoService implements FileInfoInterface
     public function getFileInfo(string $pathFile): array
     {
         try {
-            if (Storage::exists($pathFile)) {
-                return pathinfo($pathFile);
-            } else {
+            if (! Storage::exists($pathFile)) {
                 throw new FileNotFoundException();
             }
+            return pathinfo($pathFile);
         } catch (FileNotFoundException $e) {
             echo 'Файл не найден: ' . $e->getMessage(); // не знаю еще как правильно ошибку обрабатывать
         } catch (Throwable $throwable) {

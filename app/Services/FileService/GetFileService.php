@@ -14,11 +14,10 @@ class GetFileService implements GetFileInterface
     public function getFile(string $pathFile): string
     {
         try {
-            if (Storage::exists($pathFile)) {
-                return Storage::get($pathFile);
-            } else {
+            if (! Storage::exists($pathFile)) {
                 throw new FileNotFoundException();
             }
+            return Storage::get($pathFile);
         } catch (FileNotFoundException $e) {
             echo 'Файл не найден: ' . $e->getMessage(); // не знаю еще как правильно ошибку обрабатывать
         } catch (Throwable $throwable) {
@@ -29,11 +28,10 @@ class GetFileService implements GetFileInterface
     public function getFilesFromDirectory(string $pathDirectory): array
     {
         try {
-            if (Storage::directoryExists($pathDirectory)) {
-                return Storage::files($pathDirectory);
-            } else {
+            if (! Storage::directoryExists($pathDirectory)) {
                 throw new FileNotFoundException();
             }
+            return Storage::files($pathDirectory);
         } catch (FileNotFoundException $e) {
             echo 'Директория не найдена: ' . $e->getMessage(); // не знаю еще как правильно ошибку обрабатывать
         } catch (Throwable $throwable) {

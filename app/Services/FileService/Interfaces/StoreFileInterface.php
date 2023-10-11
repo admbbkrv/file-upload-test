@@ -6,5 +6,5 @@ use App\Services\FileService\DTO\StoreFileDTO;
 
 interface StoreFileInterface
 {
-    public function storeFile(StoreFileDTO $dto): string;
+    public function storeFile(StoreFileDTO $dto): string | false;
 }

@@ -12,11 +12,10 @@ class DeleteFileService implements DeleteFileInterface
     public function deleteFile(string $pathFile): bool
     {
         try {
-            if (Storage::exists($pathFile)) {
-                return Storage::delete($pathFile);
-            } else {
+            if (! Storage::exists($pathFile)) {
                 return false;
             }
+            return Storage::delete($pathFile);
         } catch (Throwable $throwable) {
             throw $throwable;
         }
@@ -25,11 +24,10 @@ class DeleteFileService implements DeleteFileInterface
     public function deleteDirectory(string $pathDirectory): bool
     {
         try {
-            if (Storage::directoryExists($pathDirectory)) {
-                return Storage::deleteDirectory($pathDirectory);
-            } else {
+            if (! Storage::directoryExists($pathDirectory)) {
                 return false;
             }
+            return Storage::deleteDirectory($pathDirectory);
         } catch (Throwable $throwable) {
             throw $throwable;
         }

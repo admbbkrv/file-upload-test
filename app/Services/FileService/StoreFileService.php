@@ -12,38 +12,31 @@ use Throwable;
 class StoreFileService implements StoreFileInterface
 {
     protected string $pathPublicStore = 'public/files';
-    protected string $pathChunksStore = 'chunks';
-    protected GetFileService $getFileService;
-    protected DeleteFileService $deleteFileService;
-    protected FileInfoService $fileInfoService;
-    protected CountFilesService $countFilesService;
+    protected const CHUNKS_PATH = 'chunks';
 
     public function __construct(
-        GetFileService $getFileService,
-        DeleteFileService $deleteFileService,
-        FileInfoService $fileInfoService,
-        CountFilesService $countFilesService
+        protected GetFileService $getFileService,
+        protected DeleteFileService $deleteFileService,
+        protected FileInfoService $fileInfoService,
     ) {
-        $this->getFileService = $getFileService;
-        $this->deleteFileService = $deleteFileService;
-        $this->fileInfoService = $fileInfoService;
-        $this->countFilesService = $countFilesService;
+
     }
 
-    public function storeFile(StoreFileDTO $dto): string
+    public function storeFile(StoreFileDTO $dto): string | false
     {
         if ($dto->getTotalChunks() === 1) {
             return $this->storeSingleChankedFile($dto);
-        } else {
-            $pathChunksStored = $this->storeChunk($dto);
-            $countedChunks = $this->countFilesService->countFiles($pathChunksStored);
-
-            if ($countedChunks === $dto->getTotalChunks()) {
-                return $this->storeFileFromChunks($dto, $pathChunksStored);
-            } else {
-                return $pathChunksStored;
-            }
         }
+
+        $pathChunksStored = $this->storeChunk($dto);
+        $createdChunks = $this->getFileService->getFilesFromDirectory($pathChunksStored);
+        $countedChunks = count($createdChunks);
+
+        if ($countedChunks === $dto->getTotalChunks()) {
+            return $this->storeFileFromChunks($dto, $pathChunksStored);
+        }
+
+        return $pathChunksStored;
     }
 
     protected function storeSingleChankedFile(StoreFileDTO $dto): string
@@ -56,14 +49,14 @@ class StoreFileService implements StoreFileInterface
         }
     }
 
-    private function storeChunk(StoreFileDTO $dto): string
+    protected function storeChunk(StoreFileDTO $dto): string
     {
         try {
             $chunk = $dto->getFile();
-            $pathDirectory = $this->pathChunksStore . '/' . $dto->getFileName();
+            $pathDirectory = self::CHUNKS_PATH . '/' . $dto->getFileName();
             $chunk->storeAs(
                 $pathDirectory,
-                $dto->getChunkIndex() . '.' . $dto->getFileExtension()
+                $dto->getChunkIndex(),
             );
             return $pathDirectory;
         } catch (Throwable $throwable) {
@@ -72,18 +65,19 @@ class StoreFileService implements StoreFileInterface
         }
     }
 
-    private function storeFileFromChunks(StoreFileDTO $dto, string $pathChunksStored)
+    protected function storeFileFromChunks(StoreFileDTO $dto, string $pathChunksStored)
     {
         try {
-            $chuksArray = $this->getFileService->getFilesFromDirectory($pathChunksStored);
-            $extension = $this->fileInfoService->getFileExtension($chuksArray[0]);
-            $outputFileName = Str::uuid() . '.' . $extension;
+            $chunksArray = $this->getFileService->getFilesFromDirectory($pathChunksStored);
+//            $extension = $this->fileInfoService->getFileExtension($chunksArray[0]);
+//            $outputFileName = Str::uuid() . '.' . $extension;
+            $outputFileName = $dto->getFileName();
             $outputFile = $this->pathPublicStore . '/' . $outputFileName;
 
             Storage::put($this->pathPublicStore . '/' . $outputFileName, '');
 
             for ($i = 0; $i < $dto->getTotalChunks(); $i++) {
-                $chunkContent = $this->getFileService->getFile($chuksArray[$i]);
+                $chunkContent = $this->getFileService->getFile($chunksArray[$i]);
                 Storage::append($outputFile, $chunkContent, null);
             }
 

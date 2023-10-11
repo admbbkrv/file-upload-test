@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Services;
+namespace App\Services\FileService;
 
-use App\Services\FileService\StoreFileService;
+use App\Http\Requests\StoreFileRequest;
 
 class StoreVideoService extends StoreFileService
 {
